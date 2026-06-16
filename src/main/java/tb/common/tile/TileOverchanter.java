@@ -7,6 +7,8 @@ import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
 
 import net.minecraft.enchantment.EnchantmentHelper;
 import net.minecraft.entity.player.EntityPlayer;
@@ -21,13 +23,13 @@ import net.minecraft.util.AxisAlignedBB;
 import net.minecraft.util.DamageSource;
 import net.minecraft.world.World;
 import net.minecraftforge.common.util.ForgeDirection;
-
-import com.gtnewhorizon.gtnhlib.geometry.CubeIterator;
+import net.minecraftforge.fluids.FluidStack;
 
 import DummyCore.Utils.MathUtils;
 import DummyCore.Utils.MiscUtils;
 import crazypants.enderio.machine.obelisk.xp.TileExperienceObelisk;
 import crazypants.enderio.xp.ExperienceContainer;
+import crazypants.enderio.xp.XpUtil;
 import thaumcraft.api.aspects.Aspect;
 import thaumcraft.api.wands.IWandable;
 import thaumcraft.common.lib.events.EssentiaHandler;
@@ -339,7 +341,7 @@ public class TileOverchanter extends TileEntity implements ISidedInventory, IWan
                 if (p.experienceLevel >= lvlsleft) {
                     p.attackEntityFrom(DamageSource.magic, 8);
                     this.worldObj.playSoundEffect(p.posX, p.posY, p.posZ, "thaumcraft:zap", 1F, 1.0F);
-                    p.experienceLevel -= lvlsleft;
+                    p.addExperienceLevel(-lvlsleft);
                     this.xpToAbsorb = 0;
                     // If anyone else wants to implement the exact formula for experience draining, you can
                     return;
@@ -348,27 +350,20 @@ public class TileOverchanter extends TileEntity implements ISidedInventory, IWan
         }
     }
 
-    public int drainXPJarsInRange(int xp, int range) {
+    private int drainXPJarsInRange(int xp, int range) {
         if (xp <= 0) return xp;
-        CubeIterator cubeIter = new CubeIterator(range);
-        int jarxp;
-        while (cubeIter.hasNext()) {
-            cubeIter.next();
-            if (this.worldObj.getTileEntity(
-                cubeIter.n + this.xCoord,
-                cubeIter.l + this.yCoord,
-                cubeIter.m + this.zCoord) instanceof TileEntityJarXP jar) {
-                jarxp = jar.getXP();
-                if (jarxp < xp) {
-                    if (!worldObj.isRemote) jar.setXP(0);
-                    xp -= jarxp;
-                    continue;
-                }
-                if (!worldObj.isRemote) jar.setXP(jarxp - xp);
-                return 0;
+        AtomicInteger requiredXp = new AtomicInteger(xp);
+        iterateTileEntities(this.xCoord, this.yCoord, this.zCoord, range, TileEntityJarXP.class, jar -> {
+            int jarxp = jar.getXP();
+            if (jarxp < requiredXp.get()) {
+                jar.setXP(0);
+                requiredXp.addAndGet(-jarxp);
+            } else {
+                jar.setXP(jarxp - requiredXp.getAndSet(0));
             }
-        }
-        return xp;
+            return requiredXp.get() <= 0;
+        });
+        return Math.max(0, requiredXp.get());
         // This algorithm drains each jar it comes across sequentially without regard to how full they are. If you would
         // rather it prioritize emptying barely filled jars within a certain radius, and then emptying non-full jars,
         // then instead have a counter sinceLastPrioJar that starts at 0 and increments each iteration, and cache the
@@ -379,29 +374,37 @@ public class TileOverchanter extends TileEntity implements ISidedInventory, IWan
     }
 
     // EIO version (separated so that it prioritizes the magic jars, feel free to switch this to being in sync instead)
-    public int drainEIOObelisksInRange(int xp, int range) {
+    private int drainEIOObelisksInRange(int xp, int range) {
         if (xp <= 0) return xp;
-        CubeIterator cubeIter = new CubeIterator(range);
-        int jarxp;
-        while (cubeIter.hasNext()) {
-            cubeIter.next();
-            if (this.worldObj.getTileEntity(
-                cubeIter.n + this.xCoord,
-                cubeIter.l + this.yCoord,
-                cubeIter.m + this.zCoord) instanceof TileExperienceObelisk obelisk) {
-                ExperienceContainer cont = obelisk.getContainer();
-                jarxp = cont.getExperienceTotal();
-                // goddamn private fields with no good setters
-                if (!worldObj.isRemote) {
-                    cont.drain(null, Integer.MAX_VALUE, true);
-                    cont.addExperience(Math.max(0, jarxp - xp));
+        AtomicInteger requiredXp = new AtomicInteger(xp);
+        iterateTileEntities(this.xCoord, this.yCoord, this.zCoord, range, TileExperienceObelisk.class, obelisk -> {
+            ExperienceContainer cont = obelisk.getContainer();
+            int required = XpUtil.experienceToLiquid(requiredXp.get());
+            FluidStack drained = cont.drain(null, required, true);
+            return requiredXp.addAndGet(-XpUtil.liquidToExperience(drained.amount)) <= 0;
+        });
+        return Math.max(0, requiredXp.get());
+    }
+
+    private <T extends TileEntity> void iterateTileEntities(int centerX, int centerY, int centerZ, int range,
+        Class<T> tileEntityType, Function<T, Boolean> action) {
+        for (int dy = -range; dy <= range; dy++) {
+            for (int dx = -range; dx <= range; dx++) {
+                for (int dz = -range; dz <= range; dz++) {
+                    int x = centerX + dx;
+                    int y = centerY + dy;
+                    int z = centerZ + dz;
+                    TileEntity tileEntity = this.worldObj.getTileEntity(x, y, z);
+                    if (tileEntity != null && tileEntity.getClass()
+                        .isAssignableFrom(tileEntityType)) {
+                        // noinspection unchecked
+                        if (action.apply((T) tileEntity)) {
+                            return;
+                        }
+                    }
                 }
-                // if this causes desyncs, remove the !worldObj.isRemote test or add an additional multiplayer test
-                xp -= jarxp;
-                if (xp <= 0) return 0;
             }
         }
-        return xp;
     }
 
 }

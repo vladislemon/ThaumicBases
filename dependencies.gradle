@@ -1,7 +1,6 @@
 // Add your dependencies here
 
 dependencies {
-    api("com.github.GTNewHorizons:GTNHLib:0.9.47:dev")
     api('thaumcraft:Thaumcraft:1.7.10-4.2.3.5:dev')
     api('com.github.GTNewHorizons:DummyCore:1.20.0:dev')
 
@@ -13,4 +12,5 @@ dependencies {
     runtimeOnly("com.github.GTNewHorizons:waila:1.19.22:dev")
     runtimeOnly('com.github.GTNewHorizons:Baubles-Expanded:2.2.9-GTNH:dev')
     runtimeOnly('com.github.GTNewHorizons:CodeChickenCore:1.4.11:dev') // Required to allow dummycore to run in dev
+    runtimeOnly("com.github.GTNewHorizons:EnderIO:2.10.3:dev")
 }
