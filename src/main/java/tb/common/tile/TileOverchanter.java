@@ -50,22 +50,22 @@ public class TileOverchanter extends TileEntity implements ISidedInventory, IWan
     }
 
     @Override
-    @SuppressWarnings("unchecked")
     public void updateEntity() {
-        if (!worldObj.isRemote) {
-            if (syncTimer <= 0) {
-                syncTimer = 100;
-                NBTTagCompound tg = new NBTTagCompound();
-                tg.setInteger("0", enchantingTicks);
-                tg.setInteger("1", xpToAbsorb);
-                tg.setBoolean("2", isEnchantingStarted);
-                tg.setInteger("x", xCoord);
-                tg.setInteger("y", yCoord);
-                tg.setInteger("z", zCoord);
-                MiscUtils.syncTileEntity(tg, 0);
-            } else {
-                --syncTimer;
-            }
+        if (worldObj.isRemote) {
+            return;
+        }
+        if (syncTimer <= 0) {
+            syncTimer = 100;
+            NBTTagCompound tg = new NBTTagCompound();
+            tg.setInteger("0", enchantingTicks);
+            tg.setInteger("1", xpToAbsorb);
+            tg.setBoolean("2", isEnchantingStarted);
+            tg.setInteger("x", xCoord);
+            tg.setInteger("y", yCoord);
+            tg.setInteger("z", zCoord);
+            MiscUtils.syncTileEntity(tg, 0);
+        } else {
+            --syncTimer;
         }
 
         if (this.inventory == null) {
@@ -79,10 +79,13 @@ public class TileOverchanter extends TileEntity implements ISidedInventory, IWan
                 this.worldObj
                     .playSoundEffect(this.xCoord, this.yCoord, this.zCoord, "thaumcraft:infuserstart", 1F, 1.0F);
                 if (EssentiaHandler.drainEssentia(this, Aspect.MAGIC, ForgeDirection.UNKNOWN, 8, false)) {
+                    // +1 is needed to exactly mimic original timings and not use extra 1 essentia (should be 32 in
+                    // perfect conditions)
+                    int enchantingSeconds = enchantingTicks / 20 + 1;
                     // the values being checked against are the second milestones in the enchanting process
-                    if (enchantingTicks / 20 >= 16) {
+                    if (enchantingSeconds >= 16) {
                         if (xpToAbsorb != 0) absorbXP();
-                        if (enchantingTicks / 20 >= 32 && xpToAbsorb == 0) {
+                        if (enchantingSeconds >= 32 && xpToAbsorb == 0) {
                             int enchId = this.findEnchantment(inventory);
                             NBTTagList nbttaglist = this.inventory.getEnchantmentTagList();
                             for (int i = 0; i < nbttaglist.tagCount(); ++i) {
@@ -134,7 +137,6 @@ public class TileOverchanter extends TileEntity implements ISidedInventory, IWan
         return false;
     }
 
-    @SuppressWarnings("unchecked")
     public int findEnchantment(ItemStack enchanted) {
         NBTTagCompound stackTag = MiscUtils.getStackTag(enchanted);
         LinkedHashMap<Integer, Integer> ench = (LinkedHashMap<Integer, Integer>) EnchantmentHelper
@@ -292,7 +294,7 @@ public class TileOverchanter extends TileEntity implements ISidedInventory, IWan
     @Override
     public int onWandRightClick(World world, ItemStack wandstack, EntityPlayer player, int x, int y, int z, int side,
         int md) {
-        if (canStartEnchanting()) {
+        if (!world.isRemote && canStartEnchanting()) {
             isEnchantingStarted = true;
             player.swingItem();
             syncTimer = 0;
